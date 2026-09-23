@@ -1,0 +1,131 @@
+#include <xc.inc>
+
+    ; --- 1. CONFIGURACIÓN BASE Y VARIABLES ---
+    config FOSC = INTOSCIO_EC, WDT = OFF, LVP = OFF, MCLRE = OFF, PBADEN = OFF     
+    PSECT udata_acs
+FLAGS: DS 1        
+DECENAS: DS 1        
+UNIDADES: DS 1        
+CONTADOR_ADC: DS 1        
+TEMP_C: DS 1        
+TEMP_CALC: DS 1        
+TEMP_DIV: DS 1  
+
+    ; --- 2. CONFIGURACIÓN DE HARDWARE ---
+    PSECT reset_vec, class=CODE, reloc=2, abs
+    ORG 0x0000          
+    GOTO CONFIGURACION
+
+    PSECT code      
+CONFIGURACION:
+    MOVLW 01110000B     ; Oscilador a 8MHz
+    MOVWF OSCCON, a
+    MOVLW 0x07          ; Apagar comparadores
+    MOVWF CMCON, a
+
+    ; Limpiar variables RAM
+    CLRF FLAGS, a
+    CLRF DECENAS, a
+    CLRF UNIDADES, a
+    MOVLW 20
+    MOVWF CONTADOR_ADC, a   
+
+    ; Configurar Puertos (A: Displays/Sensor, C: Actuadores, D: Segmentos)
+    BCF TRISC, 0, a         
+    BCF TRISC, 1, a         
+    BCF LATC, 0, a          
+    BCF LATC, 1, a          
+    CLRF TRISD, a           
+    CLRF LATD, a            
+    BCF TRISA, 1, a         
+    BCF TRISA, 2, a         
+    BSF TRISA, 0, a         
+
+    ; Configurar ADC y Timer0
+    MOVLW 0x0E          
+    MOVWF ADCON1, a
+    MOVLW 0x12          
+    MOVWF ADCON2, a
+    MOVLW 0x01          
+    MOVWF ADCON0, a
+    MOVLW 00001000B     
+    MOVWF T0CON, a
+    MOVLW 0xD8          
+    MOVWF TMR0H, a
+    MOVLW 0xF0          
+    MOVWF TMR0L, a
+
+    ; Habilitar Interrupciones Básicas (TMR0 y ADC)
+    BSF INTCON, 7, a        
+    BSF INTCON, 6, a        
+    BSF INTCON, 5, a        
+    BSF T0CON, 7, a   
+    BCF PIR1, 6, a          
+    BSF PIE1, 6, a          
+
+MAIN_LOOP:
+    NOP                
+    GOTO MAIN_LOOP
+
+    ; --- 3. MÓDULO DE DISPLAYS (TIMER0) ---
+ATENDER_TIMER0:
+    MOVLW 0xD8
+    MOVWF TMR0H, a
+    MOVLW 0xF0
+    MOVWF TMR0L, a
+
+    ; Multiplexación
+    CLRF LATD, a            
+    BTG FLAGS, 1, a         
+    BTFSS FLAGS, 1, a       
+    GOTO MOSTRAR_UNIDADES
+MOSTRAR_DECENAS:
+    BCF LATA, 1, a          
+    BSF LATA, 2, a          
+    MOVF DECENAS, W, a
+    CALL DECODIFICADOR_7SEG
+    MOVWF LATD, a           
+    GOTO GESTIONAR_ADC
+MOSTRAR_UNIDADES:
+    BCF LATA, 2, a          
+    BSF LATA, 1, a          
+    MOVF UNIDADES, W, a
+    CALL DECODIFICADOR_7SEG
+    MOVWF LATD, a
+GESTIONAR_ADC:
+    DECFSZ CONTADOR_ADC, F, a
+    GOTO FIN_TIMER0         
+    MOVLW 20
+    MOVWF CONTADOR_ADC, a
+    BSF ADCON0, 1, a        
+FIN_TIMER0:
+    BCF INTCON, 2, a        
+    GOTO SALIR_ISR
+
+    ; --- 4. MÓDULO DEL SENSOR (ADC Y MATEMÁTICAS) ---
+ATENDER_ADC:
+    MOVF ADRESH, W, a
+    RLNCF WREG, W, a        
+    BTFSC FLAGS, 0, a       
+    GOTO CALCULAR_FAHRENHEIT
+
+CALCULAR_CELSIUS:
+    MOVWF UNIDADES, a       
+    CLRF DECENAS, a         
+RESTAR_10:
+    MOVLW 10
+    SUBWF UNIDADES, W, a    
+    BNC FIN_SEPARACION      
+    MOVWF UNIDADES, a       
+    INCF DECENAS, F, a      
+    MOVLW 10
+    XORWF DECENAS, W, a
+    BZ CAP_99               
+    GOTO RESTAR_10
+CAP_99:
+    MOVLW 9
+    MOVWF DECENAS, a
+    MOVWF UNIDADES, a
+FIN_SEPARACION:
+    BCF PIR1, 6, a          
+    GOTO SALIR_ISR
