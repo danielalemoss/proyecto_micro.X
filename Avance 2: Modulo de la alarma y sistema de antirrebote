@@ -1,0 +1,26 @@
+; --- 1. AÑADIDO EN LA RAM ---
+ANTIRREBOTE_0: DS 1
+
+    ; --- 2. AÑADIDO EN LA CONFIGURACIÓN ---
+    BSF TRISB, 0, a         ; Pin RB0 como entrada
+    BCF INTCON2, 7, a       ; Habilitar Pull-Ups
+    BSF INTCON, 4, a        ; Habilitar INT0IE
+
+    ; --- 3. MÓDULO LÓGICO DE LA ALARMA (INT0) ---
+ATENDER_INT0:
+    MOVF ANTIRREBOTE_0, F, a    
+    BNZ FIN_INT0                
+    BTG LATC, 0, a              ; Alternar estado del LED de Alarma
+    MOVLW 15                    ; Cargar 75ms de protección
+    MOVWF ANTIRREBOTE_0, a
+FIN_INT0:
+    BCF INTCON, 1, a            
+    GOTO SALIR_ISR
+
+    ; --- 4. AÑADIDO AL INICIO DE ATENDER_TIMER0 ---
+    ; Filtro antirrebote inteligente para la Alarma
+    MOVF ANTIRREBOTE_0, F, a    
+    BZ REVISAR_RBT1             
+    BTFSS PORTB, 0, a           
+    GOTO REVISAR_RBT1           
+    DECF ANTIRREBOTE_0, F, a
