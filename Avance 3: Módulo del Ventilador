@@ -1,0 +1,25 @@
+; --- 1. AÑADIDO EN LA RAM ---
+ANTIRREBOTE_1: DS 1
+
+; --- 2. AÑADIDO EN LA CONFIGURACIÓN ---
+BSF TRISB, 1, a ; Pin RB1 como entrada
+BSF INTCON3, 3, a ; Habilitar INT1IE
+
+; --- 3. MÓDULO LÓGICO DEL VENTILADOR (INT1) ---
+ATENDER_INT1:
+MOVF ANTIRREBOTE_1, F, a    
+BNZ FIN_INT1                
+BTG LATC, 1, a ; Alternar estado del Motor (Ventilador)
+MOVLW 15                    
+MOVWF ANTIRREBOTE_1, a
+FIN_INT1:
+BCF INTCON3, 0, a           
+GOTO SALIR_ISR
+
+; --- 4. AÑADIDO A LA GESTIÓN DE ANTIRREBOTES EN TIMER0 ---
+REVISAR_RBT1:
+MOVF ANTIRREBOTE_1, F, a
+BZ REVISAR_RBT2
+BTFSS PORTB, 1, a           
+GOTO REVISAR_RBT2
+DECF ANTIRREBOTE_1, F, a
