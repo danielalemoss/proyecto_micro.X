@@ -1,0 +1,25 @@
+; --- 1. AÑADIDO EN LA RAM ---
+ANTIRREBOTE_2: DS 1
+; --- 2. AÑADIDO EN LA CONFIGURACIÓN ---
+BSF TRISB, 2, a         ; Pin RB2 como entrada
+BSF INTCON3, 4, a       ; Habilitar INT2IE
+  
+  ; --- 3. MÓDULO LÓGICO DE SELECCIÓN DE MODO (INT2) ---
+ATENDER_INT2:
+MOVF ANTIRREBOTE_2, F, a    
+BNZ FIN_INT2                
+BTG FLAGS, 0, a             ; Cambiar bit de visualización (Celsius/Fahrenheit)
+MOVLW 15                    
+MOVWF ANTIRREBOTE_2, a
+FIN_INT2:
+BCF INTCON3, 1, a           
+GOTO SALIR_ISR
+  
+; --- 4. AÑADIDO A LA GESTIÓN DE ANTIRREBOTES EN TIMER0 ---
+REVISAR_RBT2:
+MOVF ANTIRREBOTE_2, F, a
+BZ FIN_REBOTES
+BTFSS PORTB, 2, a           
+GOTO FIN_REBOTES
+DECF ANTIRREBOTE_2, F, a
+FIN_REBOTES:
