@@ -1,0 +1,87 @@
+PSECT isr_vec, class=CODE, reloc=2, abs
+ORG 0x0008
+GOTO ISR_RUTINA
+
+PSECT isr_low_vec, class=CODE, reloc=2, abs
+ORG 0x0018
+RETFIE
+
+CLRF ANTIRREBOTE_0, a
+CLRF ANTIRREBOTE_1, a
+CLRF ANTIRREBOTE_2, a
+
+; Detectar pulsaciones por flanco descendente
+BCF INTCON2, 6, a
+BCF INTCON2, 5, a
+BCF INTCON2, 4, a
+
+PSECT code
+
+ISR_RUTINA:
+    BTFSC INTCON, 1, a
+    GOTO ATENDER_INT0
+
+    BTFSC INTCON3, 0, a
+    GOTO ATENDER_INT1
+
+    BTFSC INTCON3, 1, a
+    GOTO ATENDER_INT2
+
+    BTFSC INTCON, 2, a
+    GOTO ATENDER_TIMER0
+
+    BTFSC PIR1, 6, a
+    GOTO ATENDER_ADC
+
+SALIR_ISR:
+    RETFIE 1
+
+CALCULAR_FAHRENHEIT:
+    MOVWF TEMP_C, a
+    MOVWF TEMP_DIV, a
+    CLRF TEMP_CALC, a
+
+DIVIDIR_5:
+    MOVLW 5
+    SUBWF TEMP_DIV, W, a
+    BNC FIN_DIVISION
+
+    MOVWF TEMP_DIV, a
+    INCF TEMP_CALC, F, a
+    GOTO DIVIDIR_5
+
+FIN_DIVISION:
+    ; Multiplicar el cociente entero por 4
+    RLNCF TEMP_CALC, F, a
+    RLNCF TEMP_CALC, W, a
+
+    ADDWF TEMP_C, W, a
+    ADDLW 32
+
+    GOTO CALCULAR_CELSIUS
+
+PSECT tabla_seg, class=CODE, reloc=2, abs
+    ORG 0x0200
+
+DECODIFICADOR_7SEG:
+    MOVWF TEMP_CALC, a
+
+    MOVLW 0x02
+    MOVWF PCLATH, a
+
+    MOVF TEMP_CALC, W, a
+    RLNCF WREG, W, a
+    ADDWF PCL, F, a
+
+    RETLW 00111111B         ; 0
+    RETLW 00000110B         ; 1
+    RETLW 01011011B         ; 2
+    RETLW 01001111B         ; 3
+    RETLW 01100110B         ; 4
+    RETLW 01101101B         ; 5
+    RETLW 01111101B         ; 6
+    RETLW 00000111B         ; 7
+    RETLW 01111111B         ; 8
+    RETLW 01101111B         ; 9
+
+    END
