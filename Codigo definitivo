@@ -1,0 +1,505 @@
+#include <xc.inc>
+
+TIEMPO_GRACIA EQU 30
+
+    ; --- BITS DE CONFIGURACION ---
+    config FOSC = INTOSCIO_EC
+    config WDT = OFF
+    config LVP = OFF
+    config MCLRE = OFF
+    config PBADEN = OFF
+
+    ; --- VARIABLES EN RAM ---
+    PSECT udata_acs
+
+FLAGS:
+
+    DS 1
+
+DECENAS:
+    DS 1
+
+UNIDADES:
+    DS 1
+
+CONTADOR_ADC:
+    DS 1
+
+TEMP_ALTA:
+    DS 1        
+
+TEMP_CALC:
+    DS 1        
+
+TEMP_DIV:
+    DS 1        
+
+ANTIRREBOTE_0:
+    DS 1
+
+ANTIRREBOTE_1:
+    DS 1
+
+ANTIRREBOTE_2:
+    DS 1
+
+GRACIA_LED:
+    DS 1        
+
+GRACIA_VENT:
+    DS 1        ;
+
+    ; --- VECTORES DE MEMORIA ---
+    PSECT reset_vec, class=CODE, reloc=2, abs
+    ORG 0x0000
+    GOTO CONFIGURACION
+
+    PSECT isr_vec, class=CODE, reloc=2, abs
+    ORG 0x0008
+    GOTO ISR_RUTINA
+
+    PSECT isr_low_vec, class=CODE, reloc=2, abs
+    ORG 0x0018
+    RETFIE
+
+    ; --- CONFIGURACION INICIAL ---
+    PSECT code
+
+CONFIGURACION:
+    ; Oscilador interno a 8 MHz
+    MOVLW 01110000B
+    MOVWF OSCCON, a
+
+    ; Apagar comparadores analogicos
+    MOVLW 0x07
+    MOVWF CMCON, a
+
+    ; Inicializar variables
+    CLRF FLAGS, a
+    CLRF DECENAS, a
+    CLRF UNIDADES, a
+    CLRF ANTIRREBOTE_0, a
+    CLRF ANTIRREBOTE_1, a
+    CLRF ANTIRREBOTE_2, a
+    CLRF GRACIA_LED, a
+    CLRF GRACIA_VENT, a
+
+    MOVLW 20
+    MOVWF CONTADOR_ADC, a
+
+    ; 1. PUERTOS Y PINES
+
+    ; Entradas para los tres botones
+    BSF TRISB, 0, a
+    BSF TRISB, 1, a
+    BSF TRISB, 2, a
+
+    ; RC0: LED
+    ; RC1: ventilador
+    BCF TRISC, 0, a
+    BCF TRISC, 1, a
+    BCF LATC, 0, a
+    BCF LATC, 1, a
+
+    ; PORTD: segmentos de los displays
+    CLRF TRISD, a
+    CLRF LATD, a
+
+    ; RA1: unidades
+    ; RA2: decenas
+    BCF TRISA, 1, a
+    BCF TRISA, 2, a
+
+    ; RA0/AN0: entrada del sensor LM35
+    BSF TRISA, 0, a
+
+    ; 2. CONFIGURAR ADC
+    MOVLW 0x0E
+    MOVWF ADCON1, a
+
+    ; ADFM=1: lectura de 10 bits en ADRESH:ADRESL
+    MOVLW 0x92
+    MOVWF ADCON2, a
+
+    MOVLW 0x01
+    MOVWF ADCON0, a
+
+    ; 3. CONFIGURAR TIMER0: 5 ms nominales
+    MOVLW 00001000B
+    MOVWF T0CON, a
+
+    MOVLW 0xD8
+    MOVWF TMR0H, a
+    MOVLW 0xF0
+    MOVWF TMR0L, a
+
+    ; 4. HABILITAR INTERRUPCIONES
+
+    ; Activar pull-ups internas de PORTB
+    BCF INTCON2, 7, a
+
+    ; Interrupciones externas por flanco descendente
+    BCF INTCON2, 6, a
+    BCF INTCON2, 5, a
+    BCF INTCON2, 4, a
+
+    ; Habilitar INT0, INT1 e INT2
+    BSF INTCON, 4, a
+    BSF INTCON3, 3, a
+    BSF INTCON3, 4, a
+
+    ; Habilitar Timer0 e interrupciones generales
+    BSF INTCON, 5, a
+    BSF INTCON, 6, a
+    BSF INTCON, 7, a
+    BSF T0CON, 7, a
+
+    ; 5. HABILITAR INTERRUPCION ADC
+    BCF PIR1, 6, a
+    BSF PIE1, 6, a
+
+MAIN_LOOP:
+    NOP
+    GOTO MAIN_LOOP
+
+    ; --- RUTINA DE SERVICIO DE INTERRUPCION ---
+ISR_RUTINA:
+    BTFSC INTCON, 1, a
+    GOTO ATENDER_INT0
+
+    BTFSC INTCON3, 0, a
+    GOTO ATENDER_INT1
+
+    BTFSC INTCON3, 1, a
+    GOTO ATENDER_INT2
+
+    BTFSC INTCON, 2, a
+    GOTO ATENDER_TIMER0
+
+    BTFSC PIR1, 6, a
+    GOTO ATENDER_ADC
+
+SALIR_ISR:
+    RETFIE 1
+
+    ; --- BOTON DEL LED ---
+ATENDER_INT0:
+    MOVF ANTIRREBOTE_0, F, a
+    BNZ FIN_INT0
+
+    ; Alternar el estado del LED
+    BTG LATC, 0, a
+
+    ; Cancelar cualquier espera anterior
+    CLRF GRACIA_LED, a
+
+    ; Si el LED quedo apagado, iniciar la gracia.
+    ; Si quedo encendido, omitir la carga del contador.
+    MOVLW TIEMPO_GRACIA
+    BTFSS LATC, 0, a
+    MOVWF GRACIA_LED, a
+
+    ; Activar antirrebote
+    MOVLW 15
+    MOVWF ANTIRREBOTE_0, a
+
+FIN_INT0:
+    BCF INTCON, 1, a
+    GOTO SALIR_ISR
+
+    ; --- BOTON DEL VENTILADOR ---
+ATENDER_INT1:
+    MOVF ANTIRREBOTE_1, F, a
+    BNZ FIN_INT1
+
+    ; Alternar el estado del ventilador
+    BTG LATC, 1, a
+
+    ; Cancelar cualquier espera anterior
+    CLRF GRACIA_VENT, a
+
+    ; Si quedo apagado, iniciar su propia gracia.
+    ; Si quedo encendido, omitir la carga del contador.
+    MOVLW TIEMPO_GRACIA
+    BTFSS LATC, 1, a
+    MOVWF GRACIA_VENT, a
+
+    ; Activar antirrebote
+    MOVLW 15
+    MOVWF ANTIRREBOTE_1, a
+
+FIN_INT1:
+    BCF INTCON3, 0, a
+    GOTO SALIR_ISR
+
+    ; --- BOTON CELSIUS / FAHRENHEIT ---
+ATENDER_INT2:
+    MOVF ANTIRREBOTE_2, F, a
+    BNZ FIN_INT2
+
+    BTG FLAGS, 0, a
+
+    MOVLW 15
+    MOVWF ANTIRREBOTE_2, a
+
+FIN_INT2:
+    BCF INTCON3, 1, a
+    GOTO SALIR_ISR
+
+    ; --- TIMER0 ---
+ATENDER_TIMER0:
+    ; Recargar Timer0
+    MOVLW 0xD8
+    MOVWF TMR0H, a
+    MOVLW 0xF0
+    MOVWF TMR0L, a
+
+    ; --- ANTIRREBOTE ORIGINAL ---
+
+    ; Boton del LED
+    MOVF ANTIRREBOTE_0, F, a
+    BZ REVISAR_RBT1
+
+    BTFSS PORTB, 0, a
+    GOTO REVISAR_RBT1
+
+    DECF ANTIRREBOTE_0, F, a
+
+REVISAR_RBT1:
+    ; Boton del ventilador
+    MOVF ANTIRREBOTE_1, F, a
+    BZ REVISAR_RBT2
+
+    BTFSS PORTB, 1, a
+    GOTO REVISAR_RBT2
+
+    DECF ANTIRREBOTE_1, F, a
+
+REVISAR_RBT2:
+    ; Boton de cambio de unidad
+    MOVF ANTIRREBOTE_2, F, a
+    BZ FIN_REBOTES
+
+    BTFSS PORTB, 2, a
+    GOTO FIN_REBOTES
+
+    DECF ANTIRREBOTE_2, F, a
+
+FIN_REBOTES:
+    ; --- MULTIPLEXACION DE DISPLAYS ---
+    ; RA2 = decenas
+    ; RA1 = unidades
+
+    CLRF LATD, a
+    BTG FLAGS, 1, a
+
+    BTFSS FLAGS, 1, a
+    GOTO MOSTRAR_UNIDADES
+
+MOSTRAR_DECENAS:
+    BCF LATA, 1, a
+    BSF LATA, 2, a
+
+    MOVF DECENAS, W, a
+    CALL DECODIFICADOR_7SEG
+    MOVWF LATD, a
+
+    GOTO GESTIONAR_ADC
+
+MOSTRAR_UNIDADES:
+    BCF LATA, 2, a
+    BSF LATA, 1, a
+
+    MOVF UNIDADES, W, a
+    CALL DECODIFICADOR_7SEG
+    MOVWF LATD, a
+
+GESTIONAR_ADC:
+    ; Ejecutar esta parte cada 20 interrupciones:
+    ; 20 x 5 ms = aproximadamente 100 ms.
+    DECFSZ CONTADOR_ADC, F, a
+    GOTO FIN_TIMER0
+
+    MOVLW 20
+    MOVWF CONTADOR_ADC, a
+
+    ; --- DESCONTAR TIEMPOS DE GRACIA ---
+    ; No se usan ciclos de espera.
+
+    MOVF GRACIA_LED, F, a
+    BZ DESCONTAR_GRACIA_VENT
+
+    DECF GRACIA_LED, F, a
+
+DESCONTAR_GRACIA_VENT:
+    MOVF GRACIA_VENT, F, a
+    BZ INICIAR_ADC
+
+    DECF GRACIA_VENT, F, a
+
+INICIAR_ADC:
+    ; Iniciar una nueva lectura del sensor
+    BSF ADCON0, 1, a
+
+FIN_TIMER0:
+    BCF INTCON, 2, a
+    GOTO SALIR_ISR
+
+    ; --- ADC: LM35 CON REFERENCIA DE 5 V ---
+ATENDER_ADC:
+    ; ADC = ADRESH:ADRESL, entre 0 y 1023.
+    ; Temperatura estimada = ADC * 500 / 1024.
+    ; T > 25 C corresponde a ADC >= 52.
+
+    MOVF ADRESH, F, a
+    BNZ TEMPERATURA_ALTA
+
+    MOVLW 52
+    SUBWF ADRESL, W, a
+    BC TEMPERATURA_ALTA
+
+    ; ADC <= 51:
+    ; apagar ambos al pasar de temperatura alta a baja.
+    BTFSC FLAGS, 2, a
+    BCF LATC, 0, a
+
+    BTFSC FLAGS, 2, a
+    BCF LATC, 1, a
+
+    BCF FLAGS, 2, a
+    GOTO SELECCIONAR_UNIDAD
+
+TEMPERATURA_ALTA:
+    ; Registrar que la lectura esta sobre el umbral
+    BSF FLAGS, 2, a
+
+    ; Encender el LED solo si termino su gracia
+    MOVF GRACIA_LED, F, a
+    BNZ REVISAR_GRACIA_VENT
+
+    BSF LATC, 0, a
+
+REVISAR_GRACIA_VENT:
+    ; Encender el ventilador solo si termino su gracia
+    MOVF GRACIA_VENT, F, a
+    BNZ SELECCIONAR_UNIDAD
+
+    BSF LATC, 1, a
+
+SELECCIONAR_UNIDAD:
+    BTFSC FLAGS, 0, a
+    GOTO CALCULAR_FAHRENHEIT
+
+CALCULAR_CELSIUS:
+    ; C = redondear(ADC * 125 / 256)
+    MOVLW 125
+    CALL CONVERTIR_ADC
+
+    GOTO PREPARAR_DIGITOS
+
+CALCULAR_FAHRENHEIT:
+    ; F = redondear(ADC * 225 / 256) + 32
+    MOVLW 225
+    CALL CONVERTIR_ADC
+
+    MOVLW 32
+    ADDWF TEMP_CALC, F, a
+
+    MOVLW 0
+    ADDWFC TEMP_ALTA, F, a
+
+PREPARAR_DIGITOS:
+    ; Resultado de 16 bits.
+    ; Limitar a 99 para los dos displays.
+    MOVF TEMP_ALTA, F, a
+    BNZ CAP_99
+
+    MOVF TEMP_CALC, W, a
+    MOVWF UNIDADES, a
+
+    CLRF DECENAS, a
+
+RESTAR_10:
+    MOVLW 10
+    SUBWF UNIDADES, W, a
+    BNC FIN_SEPARACION
+
+    MOVWF UNIDADES, a
+    INCF DECENAS, F, a
+
+    MOVLW 10
+    XORWF DECENAS, W, a
+    BZ CAP_99
+
+    GOTO RESTAR_10
+
+CAP_99:
+    MOVLW 9
+    MOVWF DECENAS, a
+    MOVWF UNIDADES, a
+
+FIN_SEPARACION:
+    BCF PIR1, 6, a
+    GOTO SALIR_ISR
+
+    ; --- CONVERSION DEL ADC ---
+    ; Entrada W: factor 125 o 225.
+    ; Salida: TEMP_ALTA:TEMP_CALC.
+    ; Resultado entero = (ADC * factor + 128) / 256.
+    ; Se incluyen ambos bytes del ADC.
+
+CONVERTIR_ADC:
+    MOVWF TEMP_DIV, a
+
+    ; Multiplicar el byte bajo
+    MULWF ADRESL, a
+    MOVFF PRODH, TEMP_CALC
+
+    ; Redondeo
+    MOVLW 128
+    ADDWF PRODL, F, a
+
+    MOVLW 0
+    ADDWFC TEMP_CALC, F, a
+
+    ; Multiplicar el byte alto
+    MOVF TEMP_DIV, W, a
+    MULWF ADRESH, a
+
+    ; Combinar los resultados
+    MOVF TEMP_CALC, W, a
+    ADDWF PRODL, W, a
+    MOVWF TEMP_CALC, a
+
+    MOVLW 0
+    ADDWFC PRODH, W, a
+    MOVWF TEMP_ALTA, a
+
+    RETURN
+
+    ; --- TABLA DE SIETE SEGMENTOS ---
+    PSECT tabla_seg, class=CODE, reloc=2, abs
+    ORG 0x0200
+
+DECODIFICADOR_7SEG:
+    MOVWF TEMP_CALC, a
+
+    MOVLW 0x02
+    MOVWF PCLATH, a
+
+    MOVF TEMP_CALC, W, a
+    RLNCF WREG, W, a
+    ADDWF PCL, F, a
+
+    RETLW 00111111B         ; 0
+    RETLW 00000110B         ; 1
+    RETLW 01011011B         ; 2
+    RETLW 01001111B         ; 3
+    RETLW 01100110B         ; 4
+    RETLW 01101101B         ; 5
+    RETLW 01111101B         ; 6
+    RETLW 00000111B         ; 7
+    RETLW 01111111B         ; 8
+    RETLW 01101111B         ; 9
+
+    END
